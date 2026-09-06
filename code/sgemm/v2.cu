@@ -16,9 +16,6 @@
         }                                                                       \
     } while (0)
 
-// 最简单的 SGEMM kernel：每个线程计算 C 的一个元素。
-// 矩阵均按 row-major 存储：
-// A: M x K, B: K x N, C: M x N
 template <unsigned int BLOCK_SIZE>
 __global__ void sgemm_kernel(const float* A, const float* B, float* C,
                              int M, int N, int K) {

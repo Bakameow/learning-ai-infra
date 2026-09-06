@@ -4,11 +4,13 @@
 #include <cstdio>
 
 namespace sgemm_config {
-constexpr int M = 1024;
-constexpr int N = 1024;
-constexpr int K = 2048;
-constexpr unsigned int BLOCK_SIZE = 16;
-constexpr unsigned int STRIDE = 2;
+constexpr int M = 2048;
+constexpr int N = 2048;
+constexpr int K = 1024;
+constexpr unsigned int BLOCK_SIZE = 32;
+constexpr int BM = 128;
+constexpr int BN = 128;
+constexpr int BK = 8;
 
 inline float check(const float* h_C, const float* h_ref, int M, int N) {
     float max_error = 0.0f;

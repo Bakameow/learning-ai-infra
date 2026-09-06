@@ -16,40 +16,87 @@
         }                                                                       \
     } while (0)
 
-// 最简单的 SGEMM kernel：每个线程计算 C 的一个元素。
-// 矩阵均按 row-major 存储：
-// A: M x K, B: K x N, C: M x N
-template <unsigned int BLOCK_SIZE>
-__global__ void sgemm_kernel(const float* A, const float* B, float* C,
-                             int M, int N, int K) {
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    const float* a_ptr = A + (blockIdx.y * blockDim.y) * K;
-    const float* b_ptr = B + blockIdx.x * blockDim.x;
-    __shared__ float a_shared[BLOCK_SIZE * BLOCK_SIZE];
-    __shared__ float b_shared[BLOCK_SIZE * BLOCK_SIZE];
+template <int BM, int BN, int BK, int BLOCK_SIZE>
+__global__ void sgemm_kernel(const float* A, const float* B, float* C, int M, int N, int K) {
+    int tid = threadIdx.y * blockDim.x + threadIdx.x;
+    const int r0 = blockIdx.y * BM;
+    const int c0 = blockIdx.x * BN;
+    // const float* a_ptr = A + blockIdx.y * BM * K;
+    // const float* b_ptr = B + blockIdx.x * BN;
 
-    float sumval = 0.0f;
-    for(int s=0; s<K; s+=BLOCK_SIZE){
-        a_shared[threadIdx.y * BLOCK_SIZE+threadIdx.x] = a_ptr[threadIdx.y * K + threadIdx.x + s];
-        b_shared[threadIdx.y * BLOCK_SIZE+threadIdx.x] = b_ptr[(threadIdx.y + s) * N + threadIdx.x];
-        __syncthreads();
-        for(int k=0; k<BLOCK_SIZE; ++k)
-            sumval += a_shared[threadIdx.y * BLOCK_SIZE +k] * b_shared[k * BLOCK_SIZE + threadIdx.x];
-        __syncthreads();
+    constexpr int A_BLOCK_X = BK;
+    constexpr int A_BLOCK_Y = BLOCK_SIZE / A_BLOCK_X;
+    const int a_tx = tid % A_BLOCK_X;
+    const int a_ty = tid / A_BLOCK_X;
 
+
+    constexpr int B_BLOCK_Y = BK;
+    constexpr int B_BLOCK_X = BLOCK_SIZE / B_BLOCK_Y;
+    const int b_tx = tid % B_BLOCK_X;
+    const int b_ty = tid / B_BLOCK_X;
+
+    constexpr int C_BLOCK_X = 16;
+    constexpr int C_BLOCK_Y = BLOCK_SIZE / C_BLOCK_X;
+    constexpr int Tm = BM / C_BLOCK_Y;
+    constexpr int Tn = BN / C_BLOCK_X;
+    const int c_tx = tid % C_BLOCK_X;
+    const int c_ty = tid / C_BLOCK_X;
+
+    float c_t[Tm][Tn] = {0.0f};
+    __shared__ float a_shared[BM][BK];
+    __shared__ float b_shared[BK][BN];
+
+    for(int k=0; k < K; k += BK){
+        #pragma unroll
+        for (int i=a_ty; i < BM; i+=A_BLOCK_Y){
+            int r = r0 + i, c = a_tx + k;
+            a_shared[i][a_tx] = (r<M && c<K) ? A[r * K + c]:0.0f;
+        }
+        #pragma unroll
+        for (int j=b_tx; j < BN; j+=B_BLOCK_X){
+            int r = b_ty + k, c = c0 + j;
+            b_shared[b_ty][j] = (r<K && c<N) ? B[r * N + c]:0.0f;
+        }
+        __syncthreads();
+        // #pragma unroll
+        // for(int i=0; i<Tm; ++i){
+        //     int row = c_ty + i * C_BLOCK_Y;
+        //     for(int j=0; j<Tn; ++j){
+        //         int col = c_tx + j * C_BLOCK_X;
+        //         for(int p=0;p<BK;++p){
+        //             c_t[i][j] += a_shared[row][p] * b_shared[p][col];
+        //         }
+        //     }
+        // }
+        for(int p=0;p<BK;++p){
+            for(int i=0; i<Tm; ++i){
+                int row = c_ty + i * C_BLOCK_Y;
+                for(int j=0; j<Tn; ++j){
+                    int col = c_tx + j * C_BLOCK_X;
+                    c_t[i][j] += a_shared[row][p] * b_shared[p][col];
+                }
+            }
+        }
+        __syncthreads();
     }
-    C[row * N+col]=sumval;
+    
+    for(int i=0; i<Tm; ++i){
+        int r = r0 + c_ty + i * C_BLOCK_Y;
+        for(int j=0; j<Tn; ++j){
+            int c = c0 + c_tx + j * C_BLOCK_X;
+            if(r<M && c<N)C[r*N +c] = c_t[i][j];
+        }
+    }
 }
 
 void sgemm(const float* d_A, const float* d_B, float* d_C,
            int M, int N, int K) {
     dim3 block(sgemm_config::BLOCK_SIZE, sgemm_config::BLOCK_SIZE);
     // x对应第一个维度N，y对应第二个维度M
-    dim3 grid((N + block.x - 1) / block.x,
-              (M + block.y - 1) / block.y);
+    dim3 grid((N + sgemm_config::BN - 1) / sgemm_config::BN,
+              (M + sgemm_config::BM - 1) / sgemm_config::BM);
 
-    sgemm_kernel<sgemm_config::BLOCK_SIZE><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
+    sgemm_kernel<sgemm_config::BM,sgemm_config::BN,sgemm_config::BK,sgemm_config::BLOCK_SIZE*sgemm_config::BLOCK_SIZE><<<grid, block>>>(d_A, d_B, d_C, M, N, K);
     CUDA_CHECK(cudaGetLastError());
 }
 
@@ -125,10 +172,7 @@ int main() {
 
     cpu_sgemm(h_A, h_B, h_ref, M, N, K);
 
-    float max_error = 0.0f;
-    for (int i = 0; i < M * N; ++i) {
-        max_error = std::fmax(max_error, std::fabs(h_C[i] - h_ref[i]));
-    }
+    float max_error = sgemm_config::check(h_C, h_ref, M, N);
 
     double gflops = 2.0 * M * N * K / (elapsed_ms * 1.0e6);
     std::printf("M=%d N=%d K=%d\n", M, N, K);
