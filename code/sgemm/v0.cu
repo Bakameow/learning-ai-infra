@@ -116,10 +116,7 @@ int main() {
 
     cpu_sgemm(h_A, h_B, h_ref, M, N, K);
 
-    float max_error = 0.0f;
-    for (int i = 0; i < M * N; ++i) {
-        max_error = std::fmax(max_error, std::fabs(h_C[i] - h_ref[i]));
-    }
+    float max_error = sgemm_config::check(h_C, h_ref, M, N);
 
     double gflops = 2.0 * M * N * K / (elapsed_ms * 1.0e6);
     std::printf("M=%d N=%d K=%d\n", M, N, K);
