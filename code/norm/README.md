@@ -1,24 +1,26 @@
-# SGEMM
+# Norm
 
-这里是一个最简单的 CUDA SGEMM 示例。
+这里是一个简单的 CUDA Norm 算子示例集合。
 
 当前包含：
 
-- `v0.cu` ~ `v4.cu`：不同版本的 SGEMM 实现，所有 `.cu` 文件和执行文件都只使用版本号命名
+- `v0.cu`：naive RMSNorm，每个 CUDA block 处理一行 hidden states
+- `norm_config.h`：默认输入尺寸、epsilon、block size 和结果检查函数
 - `CMakeLists.txt`：用于快速编译和运行
 
-矩阵布局为 row-major：
+RMSNorm 输入输出布局为 row-major：
 
 ```text
-A: M x K
-B: K x N
-C: M x N
+X: rows x hidden_size
+weight: hidden_size
+Y: rows x hidden_size
 ```
 
 计算公式：
 
 ```text
-C = A x B
+rms = sqrt(mean(X[row, :]^2) + eps)
+Y[row, col] = X[row, col] / rms * weight[col]
 ```
 
 ## 环境要求
@@ -41,7 +43,7 @@ cmake --version
 进入目录：
 
 ```bash
-cd /mlx_devbox/users/yeliming.void/playground/ai-infra/code/sgemm
+cd /mlx_devbox/users/yeliming.void/playground/ai-infra/code/norm
 ```
 
 生成 build 目录：
@@ -117,16 +119,18 @@ cmake --build build -j
 运行后会输出类似：
 
 ```text
-M=1024 N=1024 K=1024
-time: 3.000 ms
-performance: 715.83 GFLOPS
+rows=2048 hidden_size=4096 eps=0.000010
+block_size=256
+bytes: 100.68 MB
+time: 0.120 ms
+bandwidth: 1118.48 GB/s
 max error: 0.000000
 ```
 
 其中：
 
 - `time`：CUDA kernel 执行时间
-- `performance`：根据 `2 * M * N * K / time` 估算得到的 GFLOPS
+- `bandwidth`：按两次读取 `X`、一次读取 `weight`、一次写入 `Y` 估算的有效带宽
 - `max error`：GPU 结果和 CPU reference 的最大误差
 
 ## 清理
