@@ -16,34 +16,47 @@
         }                                                                       \
     } while (0)
 
+
+__device__ float warpReduceSum(float val){
+    for(int offset=16;offset>0;offset>>=1){
+        val += __shfl_down_sync(0xffffffff, val, offset);
+    }
+    return val;
+}
 // 最简单的 reduce sum kernel：对一个向量 X 做求和，输出一个标量 Y。
 // 每个 block 先在 shared memory 中求局部和，再用 atomicAdd 累加到 Y。
-template <unsigned int BLOCK_SIZE>
 __global__ void reduce_sum_kernel(const float* X, float* Y, int n) {
-    __shared__ float shared[BLOCK_SIZE];
+    __shared__ float shared[32];
     int tid = threadIdx.x;
-    int gid = blockIdx.x * blockDim.x + threadIdx.x;
+    int gid = blockIdx.x * blockDim.x * 2 + threadIdx.x;
+    int lid = threadIdx.x % 32;
+    int wid = tid / 32;
 
-    shared[threadIdx.x] = (gid<n)?X[gid]:0.0f;
+    float val = 0.0f;
+    if(gid<n)val += X[gid];
+    if(gid + blockDim.x <n) val += X[gid + blockDim.x];
+    
+    val = warpReduceSum(val);
+
+    if(lid==0)shared[wid]=val;
     __syncthreads();
 
-    for (unsigned int stride = BLOCK_SIZE / 2; stride > 0; stride >>= 1) {
-        if (threadIdx.x < stride) {
-            shared[threadIdx.x] += shared[threadIdx.x + stride];
-        }
-        __syncthreads();
+    int warp_num = blockDim.x / 32;
+    if (wid==0){
+        val = (lid<warp_num)?shared[lid]:0.0f;
+        val = warpReduceSum(val);
     }
 
     if (tid == 0) {
-        atomicAdd(Y, shared[0]);
+        atomicAdd(Y, val);
     }
 }
 
 void reduce_sum(const float* d_X, float* d_Y, int n) {
     dim3 block(reduce_config::BLOCK_SIZE);
-    dim3 grid((n + block.x - 1) / block.x);
+    dim3 grid((n + block.x * 2 - 1) / (block.x * 2));
 
-    reduce_sum_kernel<reduce_config::BLOCK_SIZE><<<grid, block>>>(d_X, d_Y, n);
+    reduce_sum_kernel<<<grid, block>>>(d_X, d_Y, n);
     CUDA_CHECK(cudaGetLastError());
 }
 

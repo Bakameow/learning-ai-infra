@@ -4,21 +4,21 @@
 
 当前包含：
 
-- `v0.cu`：naive reduce sum，每个 CUDA block 处理一行并输出该行元素和
-- `reduce_config.h`：默认输入尺寸、block size 和结果检查函数
+- `v0.cu`：naive reduce sum，对一个向量求和并输出一个标量
+- `reduce_config.h`：默认向量长度、block size 和结果检查函数
 - `CMakeLists.txt`：用于快速编译和运行
 
-输入输出布局为 row-major：
+输入输出布局：
 
 ```text
-X: rows x cols
-Y: rows
+X: n
+Y: 1
 ```
 
 计算公式：
 
 ```text
-Y[row] = sum(X[row, :])
+Y = sum(X[:])
 ```
 
 ## 环境要求
@@ -109,11 +109,11 @@ cmake --build build -j
 运行后会输出类似：
 
 ```text
-rows=2048 cols=4096
+n=4194304
 block_size=256
-bytes: 33.56 MB
+bytes: 16.78 MB
 time: 0.120 ms
-bandwidth: 279.69 GB/s
+bandwidth: 139.81 GB/s
 max error: 0.000000
 ```
 
