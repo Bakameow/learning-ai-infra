@@ -1,6 +1,7 @@
 #include <cuda_runtime.h>
 
 #include "sgemm_config.h"
+#include "sgemm_cublas.h"
 
 #include <cmath>
 #include <cstdio>
@@ -160,6 +161,9 @@ int main() {
     CUDA_CHECK(cudaEventCreate(&start));
     CUDA_CHECK(cudaEventCreate(&stop));
 
+    cublasHandle_t cublas_handle;
+    CUBLAS_CHECK(cublasCreate(&cublas_handle));
+
     CUDA_CHECK(cudaEventRecord(start));
     sgemm(d_A, d_B, d_C, M, N, K);
     CUDA_CHECK(cudaEventRecord(stop));
@@ -174,12 +178,27 @@ int main() {
 
     float max_error = sgemm_config::check(h_C, h_ref, M, N);
 
-    double gflops = 2.0 * M * N * K / (elapsed_ms * 1.0e6);
+    sgemm_config::cublas_sgemm(cublas_handle, d_A, d_B, d_C, M, N, K);
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    CUDA_CHECK(cudaEventRecord(start));
+    sgemm_config::cublas_sgemm(cublas_handle, d_A, d_B, d_C, M, N, K);
+    CUDA_CHECK(cudaEventRecord(stop));
+    CUDA_CHECK(cudaEventSynchronize(stop));
+
+    float cublas_elapsed_ms = 0.0f;
+    CUDA_CHECK(cudaEventElapsedTime(&cublas_elapsed_ms, start, stop));
+
+    double gflops = sgemm_config::sgemm_gflops(M, N, K, elapsed_ms);
+    double cublas_gflops = sgemm_config::sgemm_gflops(M, N, K, cublas_elapsed_ms);
     std::printf("M=%d N=%d K=%d\n", M, N, K);
-    std::printf("time: %.3f ms\n", elapsed_ms);
-    std::printf("performance: %.2f GFLOPS\n", gflops);
+    std::printf("custom time: %.3f ms\n", elapsed_ms);
+    std::printf("custom performance: %.2f GFLOPS\n", gflops);
+    std::printf("cuBLAS time: %.3f ms\n", cublas_elapsed_ms);
+    std::printf("cuBLAS performance: %.2f GFLOPS\n", cublas_gflops);
     std::printf("max error: %.6f\n", max_error);
 
+    CUBLAS_CHECK(cublasDestroy(cublas_handle));
     CUDA_CHECK(cudaEventDestroy(start));
     CUDA_CHECK(cudaEventDestroy(stop));
     CUDA_CHECK(cudaFree(d_A));

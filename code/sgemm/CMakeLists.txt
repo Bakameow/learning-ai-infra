@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.18)
 
 project(sgemm LANGUAGES CXX CUDA)
 
+find_package(CUDAToolkit REQUIRED)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_STANDARD 17)
@@ -26,6 +28,7 @@ foreach(cu_file IN LISTS SGEMM_CU_FILES)
     target_compile_options(${target} PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>:-O2>
     )
+    target_link_libraries(${target} PRIVATE CUDA::cublas)
 
     add_custom_target(run_${name}
         COMMAND $<TARGET_FILE:${target}>
