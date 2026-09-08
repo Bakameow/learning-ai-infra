@@ -108,33 +108,18 @@ int main() {
     CUDA_CHECK(cudaMemcpy(d_B, h_B, bytes_B, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemset(d_C, 0, bytes_C));
 
-    cudaEvent_t start, stop;
-    CUDA_CHECK(cudaEventCreate(&start));
-    CUDA_CHECK(cudaEventCreate(&stop));
-
     cublasHandle_t cublas_handle;
     CUBLAS_CHECK(cublasCreate(&cublas_handle));
 
-    CUDA_CHECK(cudaEventRecord(start));
-    sgemm(d_A, d_B, d_C, M, N, K);
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
-
-    float elapsed_ms = 0.0f;
-    CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, stop));
+    float elapsed_ms = sgemm_config::benchmark_sgemm_ms([&]() {
+        sgemm(d_A, d_B, d_C, M, N, K);
+    });
 
     CUDA_CHECK(cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost));
 
-    sgemm_config::cublas_sgemm(cublas_handle, d_A, d_B, d_ref, M, N, K);
-    CUDA_CHECK(cudaDeviceSynchronize());
-
-    CUDA_CHECK(cudaEventRecord(start));
-    sgemm_config::cublas_sgemm(cublas_handle, d_A, d_B, d_ref, M, N, K);
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
-
-    float cublas_elapsed_ms = 0.0f;
-    CUDA_CHECK(cudaEventElapsedTime(&cublas_elapsed_ms, start, stop));
+    float cublas_elapsed_ms = sgemm_config::benchmark_sgemm_ms([&]() {
+        sgemm_config::cublas_sgemm(cublas_handle, d_A, d_B, d_ref, M, N, K);
+    });
 
     CUDA_CHECK(cudaMemcpy(h_ref, d_ref, bytes_C, cudaMemcpyDeviceToHost));
     float max_error = sgemm_config::check(h_C, h_ref, M, N);
@@ -151,8 +136,6 @@ int main() {
     std::printf("max error: %.6f\n", max_error);
 
     CUBLAS_CHECK(cublasDestroy(cublas_handle));
-    CUDA_CHECK(cudaEventDestroy(start));
-    CUDA_CHECK(cudaEventDestroy(stop));
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_B));
     CUDA_CHECK(cudaFree(d_C));

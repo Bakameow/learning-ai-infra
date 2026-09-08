@@ -17,13 +17,11 @@
         }                                                                       \
     } while (0)
 
-template <int BM, int BN, int BK, int BLOCK_SIZE>
+template <int BM=128, int BN=128, int BK=8, int BLOCK_SIZE=256>
 __global__ void sgemm_kernel(const float* A, const float* B, float* C, int M, int N, int K) {
     int tid = threadIdx.y * blockDim.x + threadIdx.x;
     const int r0 = blockIdx.y * BM;
     const int c0 = blockIdx.x * BN;
-    // const float* a_ptr = A + blockIdx.y * BM * K;
-    // const float* b_ptr = B + blockIdx.x * BN;
 
     constexpr int A_BLOCK_X = BK;
     constexpr int A_BLOCK_Y = BLOCK_SIZE / A_BLOCK_X;
@@ -48,6 +46,7 @@ __global__ void sgemm_kernel(const float* A, const float* B, float* C, int M, in
     __shared__ float b_shared[BK][BN];
 
     for(int k=0; k < K; k += BK){
+        // 加载A tile和B tile
         #pragma unroll
         for (int i=a_ty; i < BM; i+=A_BLOCK_Y){
             int r = r0 + i, c = a_tx + k;
@@ -59,7 +58,6 @@ __global__ void sgemm_kernel(const float* A, const float* B, float* C, int M, in
             b_shared[b_ty][j] = (r<K && c<N) ? B[r * N + c]:0.0f;
         }
         __syncthreads();
-        // #pragma unroll
         // for(int i=0; i<Tm; ++i){
         //     int row = c_ty + i * C_BLOCK_Y;
         //     for(int j=0; j<Tn; ++j){
@@ -158,33 +156,18 @@ int main() {
     CUDA_CHECK(cudaMemcpy(d_B, h_B, bytes_B, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemset(d_C, 0, bytes_C));
 
-    cudaEvent_t start, stop;
-    CUDA_CHECK(cudaEventCreate(&start));
-    CUDA_CHECK(cudaEventCreate(&stop));
-
     cublasHandle_t cublas_handle;
     CUBLAS_CHECK(cublasCreate(&cublas_handle));
 
-    CUDA_CHECK(cudaEventRecord(start));
-    sgemm(d_A, d_B, d_C, M, N, K);
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
-
-    float elapsed_ms = 0.0f;
-    CUDA_CHECK(cudaEventElapsedTime(&elapsed_ms, start, stop));
+    float elapsed_ms = sgemm_config::benchmark_sgemm_ms([&]() {
+        sgemm(d_A, d_B, d_C, M, N, K);
+    });
 
     CUDA_CHECK(cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost));
 
-    sgemm_config::cublas_sgemm(cublas_handle, d_A, d_B, d_ref, M, N, K);
-    CUDA_CHECK(cudaDeviceSynchronize());
-
-    CUDA_CHECK(cudaEventRecord(start));
-    sgemm_config::cublas_sgemm(cublas_handle, d_A, d_B, d_ref, M, N, K);
-    CUDA_CHECK(cudaEventRecord(stop));
-    CUDA_CHECK(cudaEventSynchronize(stop));
-
-    float cublas_elapsed_ms = 0.0f;
-    CUDA_CHECK(cudaEventElapsedTime(&cublas_elapsed_ms, start, stop));
+    float cublas_elapsed_ms = sgemm_config::benchmark_sgemm_ms([&]() {
+        sgemm_config::cublas_sgemm(cublas_handle, d_A, d_B, d_ref, M, N, K);
+    });
 
     CUDA_CHECK(cudaMemcpy(h_ref, d_ref, bytes_C, cudaMemcpyDeviceToHost));
     float max_error = sgemm_config::check(h_C, h_ref, M, N);
@@ -201,8 +184,6 @@ int main() {
     std::printf("max error: %.6f\n", max_error);
 
     CUBLAS_CHECK(cublasDestroy(cublas_handle));
-    CUDA_CHECK(cudaEventDestroy(start));
-    CUDA_CHECK(cudaEventDestroy(stop));
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_B));
     CUDA_CHECK(cudaFree(d_C));

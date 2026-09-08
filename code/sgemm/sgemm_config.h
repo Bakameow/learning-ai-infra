@@ -1,16 +1,57 @@
 #pragma once
 
+#include <cuda_runtime.h>
+
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 
 namespace sgemm_config {
-constexpr int M = 2048;
-constexpr int N = 2048;
-constexpr int K = 1024;
+constexpr int M = 4096;
+constexpr int N = 4096;
+constexpr int K = 2048;
 constexpr unsigned int BLOCK_SIZE = 32;
 constexpr int BM = 128;
 constexpr int BN = 128;
 constexpr int BK = 8;
+constexpr int WARMUP_ITERS = 1;
+constexpr int BENCHMARK_ITERS = 10;
+
+inline void check_cuda(cudaError_t err, const char* file, int line) {
+    if (err != cudaSuccess) {
+        std::fprintf(stderr, "CUDA error %s:%d: %s\n", file, line,
+                     cudaGetErrorString(err));
+        std::exit(EXIT_FAILURE);
+    }
+}
+
+template <typename Func>
+inline float benchmark_sgemm_ms(Func&& func, int warmup_iters = WARMUP_ITERS,
+                                int benchmark_iters = BENCHMARK_ITERS) {
+    for (int i = 0; i < warmup_iters; ++i) {
+        func();
+    }
+    check_cuda(cudaDeviceSynchronize(), __FILE__, __LINE__);
+
+    cudaEvent_t start, stop;
+    check_cuda(cudaEventCreate(&start), __FILE__, __LINE__);
+    check_cuda(cudaEventCreate(&stop), __FILE__, __LINE__);
+
+    check_cuda(cudaEventRecord(start), __FILE__, __LINE__);
+    for (int i = 0; i < benchmark_iters; ++i) {
+        func();
+    }
+    check_cuda(cudaEventRecord(stop), __FILE__, __LINE__);
+    check_cuda(cudaEventSynchronize(stop), __FILE__, __LINE__);
+
+    float elapsed_ms = 0.0f;
+    check_cuda(cudaEventElapsedTime(&elapsed_ms, start, stop), __FILE__, __LINE__);
+
+    check_cuda(cudaEventDestroy(start), __FILE__, __LINE__);
+    check_cuda(cudaEventDestroy(stop), __FILE__, __LINE__);
+
+    return elapsed_ms / benchmark_iters;
+}
 
 inline float check(const float* h_C, const float* h_ref, int M, int N) {
     float max_error = 0.0f;
