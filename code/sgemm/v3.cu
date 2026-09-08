@@ -148,10 +148,11 @@ int main() {
         h_ref[i] = 0.0f;
     }
 
-    float *d_A = nullptr, *d_B = nullptr, *d_C = nullptr;
+    float *d_A = nullptr, *d_B = nullptr, *d_C = nullptr, *d_ref = nullptr;
     CUDA_CHECK(cudaMalloc(&d_A, bytes_A));
     CUDA_CHECK(cudaMalloc(&d_B, bytes_B));
     CUDA_CHECK(cudaMalloc(&d_C, bytes_C));
+    CUDA_CHECK(cudaMalloc(&d_ref, bytes_C));
 
     CUDA_CHECK(cudaMemcpy(d_A, h_A, bytes_A, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_B, h_B, bytes_B, cudaMemcpyHostToDevice));
@@ -174,28 +175,29 @@ int main() {
 
     CUDA_CHECK(cudaMemcpy(h_C, d_C, bytes_C, cudaMemcpyDeviceToHost));
 
-    cpu_sgemm(h_A, h_B, h_ref, M, N, K);
-
-    float max_error = sgemm_config::check(h_C, h_ref, M, N);
-
-    sgemm_config::cublas_sgemm(cublas_handle, d_A, d_B, d_C, M, N, K);
+    sgemm_config::cublas_sgemm(cublas_handle, d_A, d_B, d_ref, M, N, K);
     CUDA_CHECK(cudaDeviceSynchronize());
 
     CUDA_CHECK(cudaEventRecord(start));
-    sgemm_config::cublas_sgemm(cublas_handle, d_A, d_B, d_C, M, N, K);
+    sgemm_config::cublas_sgemm(cublas_handle, d_A, d_B, d_ref, M, N, K);
     CUDA_CHECK(cudaEventRecord(stop));
     CUDA_CHECK(cudaEventSynchronize(stop));
 
     float cublas_elapsed_ms = 0.0f;
     CUDA_CHECK(cudaEventElapsedTime(&cublas_elapsed_ms, start, stop));
 
+    CUDA_CHECK(cudaMemcpy(h_ref, d_ref, bytes_C, cudaMemcpyDeviceToHost));
+    float max_error = sgemm_config::check(h_C, h_ref, M, N);
+
     double gflops = sgemm_config::sgemm_gflops(M, N, K, elapsed_ms);
     double cublas_gflops = sgemm_config::sgemm_gflops(M, N, K, cublas_elapsed_ms);
+    double cublas_ratio = cublas_gflops > 0.0 ? gflops / cublas_gflops * 100.0 : 0.0;
     std::printf("M=%d N=%d K=%d\n", M, N, K);
     std::printf("custom time: %.3f ms\n", elapsed_ms);
     std::printf("custom performance: %.2f GFLOPS\n", gflops);
     std::printf("cuBLAS time: %.3f ms\n", cublas_elapsed_ms);
     std::printf("cuBLAS performance: %.2f GFLOPS\n", cublas_gflops);
+    std::printf("custom/cuBLAS: %.2f%%\n", cublas_ratio);
     std::printf("max error: %.6f\n", max_error);
 
     CUBLAS_CHECK(cublasDestroy(cublas_handle));
@@ -204,6 +206,7 @@ int main() {
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_B));
     CUDA_CHECK(cudaFree(d_C));
+    CUDA_CHECK(cudaFree(d_ref));
 
     std::free(h_A);
     std::free(h_B);
