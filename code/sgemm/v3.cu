@@ -42,9 +42,11 @@ __global__ void sgemm_kernel(const float* A, const float* B, float* C, int M, in
     const int c_ty = tid / C_BLOCK_X;
 
     float c_t[Tm][Tn] = {0.0f};
+    float a_reg[Tm];
+    float b_reg[Tn];
     __shared__ float a_shared[BM][BK];
     __shared__ float b_shared[BK][BN];
-
+    
     for(int k=0; k < K; k += BK){
         // 加载A tile和B tile
         #pragma unroll
@@ -58,29 +60,31 @@ __global__ void sgemm_kernel(const float* A, const float* B, float* C, int M, in
             b_shared[b_ty][j] = (r<K && c<N) ? B[r * N + c]:0.0f;
         }
         __syncthreads();
-        // for(int i=0; i<Tm; ++i){
-        //     int row = c_ty + i * C_BLOCK_Y;
-        //     for(int j=0; j<Tn; ++j){
-        //         int col = c_tx + j * C_BLOCK_X;
-        //         for(int p=0;p<BK;++p){
-        //             c_t[i][j] += a_shared[row][p] * b_shared[p][col];
-        //         }
-        //     }
-        // }
+        #pragma unroll
         for(int p=0;p<BK;++p){
+            // 一次loop中，一个thread从shared memory读取Tm + Tn个float，进行2*Tm*Tn次运算
+            #pragma unroll
             for(int i=0; i<Tm; ++i){
                 int row = c_ty + i * C_BLOCK_Y;
-                for(int j=0; j<Tn; ++j){
-                    int col = c_tx + j * C_BLOCK_X;
-                    c_t[i][j] += a_shared[row][p] * b_shared[p][col];
+                a_reg[i] = a_shared[row][p];
+            }
+            #pragma unroll
+            for(int j=0; j<Tn; ++j){
+                int col = c_tx + j * C_BLOCK_X;
+                b_reg[j] = b_shared[p][col];
+            }
+            for(int i=0;i<Tm;++i){
+                for(int j=0;j<Tn;++j){
+                    c_t[i][j] += a_reg[i] * b_reg[j];
                 }
             }
         }
         __syncthreads();
     }
-    
+    #pragma unroll
     for(int i=0; i<Tm; ++i){
         int r = r0 + c_ty + i * C_BLOCK_Y;
+        #pragma unroll
         for(int j=0; j<Tn; ++j){
             int c = c0 + c_tx + j * C_BLOCK_X;
             if(r<M && c<N)C[r*N +c] = c_t[i][j];
