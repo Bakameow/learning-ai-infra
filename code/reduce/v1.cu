@@ -23,8 +23,7 @@ __device__ float warpReduceSum(float val){
     }
     return val;
 }
-// 最简单的 reduce sum kernel：对一个向量 X 做求和，输出一个标量 Y。
-// 每个 block 先在 shared memory 中求局部和，再用 atomicAdd 累加到 Y。
+
 __global__ void reduce_sum_kernel(const float* X, float* Y, int n) {
     __shared__ float shared[32];
     int tid = threadIdx.x;

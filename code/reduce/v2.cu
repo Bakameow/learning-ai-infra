@@ -23,10 +23,10 @@ __device__ float warpReduceSum(float val){
     }
     return val;
 }
+
 __global__ void reduce_sum_kernel(const float* X, float* Y, int n) {
     const float4* X4 = reinterpret_cast<const float4*>(X);
     int tid = threadIdx.x;
-    // int gid = blockIdx.x * blockDim.x + threadIdx.x;
     int lid = threadIdx.x % 32;
     int wid = tid / 32;
     int n4 = n/4;
